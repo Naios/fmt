@@ -463,14 +463,14 @@ template <> inline void reset_color<wchar_t>(FILE* stream) FMT_NOEXCEPT {
 }
 
 template <typename Char>
-inline void reset_color(basic_memory_buffer<Char>& buffer) FMT_NOEXCEPT {
+inline void reset_color(buffer<Char>& buffer) FMT_NOEXCEPT {
   const char* begin = data::reset_color;
   const char* end = begin + sizeof(data::reset_color) - 1;
   buffer.append(begin, end);
 }
 
 template <typename Char>
-void vformat_to(basic_memory_buffer<Char>& buf, const text_style& ts,
+void vformat_to(buffer<Char>& buf, const text_style& ts,
                 basic_string_view<Char> format_str,
                 basic_format_args<buffer_context<Char>> args) {
   bool has_style = false;
@@ -561,6 +561,52 @@ inline std::basic_string<Char> format(const text_style& ts, const S& format_str,
                                       const Args&... args) {
   return vformat(ts, to_string_view(format_str),
                  fmt::make_args_checked<Args...>(format_str, args...));
+}
+
+/** Formats a string with the given text_style and writes the output to ``out``.
+ */
+// GCC 8 and earlier cannot handle std::back_insert_iterator<Container> with
+// vformat_to<ArgFormatter>(...) overload, so SFINAE on iterator type instead.
+template <typename OutputIt, typename S, typename Char = char_t<S>,
+          FMT_ENABLE_IF(detail::is_output_iterator<OutputIt>::value)>
+OutputIt vformat_to(
+    OutputIt out, const text_style& ts, const S& format_str,
+    basic_format_args<buffer_context<type_identity_t<Char>>> args) {
+  decltype(detail::get_buffer<Char>(out)) buf(detail::get_buffer_init(out));
+  detail::vformat_to(buf, ts, to_string_view(format_str), args);
+  return detail::get_iterator(buf);
+}
+
+/**
+ \rst
+ Formats arguments with the given text_style, writes the result to the output
+ iterator ``out`` and returns the iterator past the end of the output range.
+
+ **Example**::
+
+   std::vector<char> out;
+   fmt::format_to(std::back_inserter(out),
+                  fmt::emphasis::bold | fg(fmt::color::red), "{}", 42); \endrst
+ */
+template <typename OutputIt, typename S, typename... Args,
+          FMT_ENABLE_IF(detail::is_output_iterator<OutputIt>::value&&
+                            detail::is_string<S>::value)>
+inline OutputIt format_to(OutputIt out, const text_style& ts, const S& format_str,
+                          Args&&... args) {
+  basic_format_args<buffer_context<type_identity_t<char_t<S>>>> store =
+      fmt::make_args_checked<Args...>(format_str, args...);
+  return vformat_to(out, ts, to_string_view(format_str), store);
+}
+
+template <typename S, typename... Args, size_t SIZE = inline_buffer_size,
+          typename Char = enable_if_t<detail::is_string<S>::value, char_t<S>>>
+inline typename buffer_context<Char>::iterator format_to(
+    basic_memory_buffer<Char, SIZE>& buf, const text_style& ts,
+    const S& format_str, Args&&... args) {
+  basic_format_args<buffer_context<type_identity_t<Char>>> store =
+      fmt::make_args_checked<Args...>(format_str, args...);
+  detail::vformat_to(buf, ts, to_string_view(format_str), store);
+  return detail::buffer_appender<Char>(buf);
 }
 
 FMT_END_NAMESPACE
